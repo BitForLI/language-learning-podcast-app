@@ -10,7 +10,11 @@ import '../../progress/domain/listening_stats.dart';
 import '../../progress/domain/review_sentence.dart';
 import '../domain/podcast.dart';
 import 'local_feed.dart';
+import 'playback_session.dart';
+import 'podcast_http.dart';
 import 'podcast_repository.dart';
+
+export 'playback_session.dart';
 
 class LocalPodcastRepository implements PodcastRepository {
   factory LocalPodcastRepository({
@@ -300,52 +304,7 @@ class LocalPodcastRepository implements PodcastRepository {
 
   @override
   Future<List<PodcastSearchResult>> search(String query) async {
-    final text = query.trim();
-    if (text.isEmpty) return const [];
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 10);
-    try {
-      final uri = Uri.https('itunes.apple.com', '/search', {
-        'term': text,
-        'media': 'podcast',
-        'entity': 'podcast',
-        'limit': '20',
-      });
-      final response = await (await client.getUrl(uri)).close();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        await response.drain<void>();
-        throw PodcastRepositoryException(
-          'Apple Podcasts 搜索失败（${response.statusCode}）',
-        );
-      }
-      final payload = jsonDecode(await response.transform(utf8.decoder).join());
-      final results = payload is Map<String, dynamic>
-          ? payload['results'] as List<dynamic>? ?? const []
-          : const <dynamic>[];
-      return results
-          .whereType<Map<String, dynamic>>()
-          .where(
-            (item) =>
-                item['feedUrl'] is String && item['collectionName'] is String,
-          )
-          .map(
-            (item) => PodcastSearchResult(
-              title: item['collectionName'] as String,
-              feedUrl: item['feedUrl'] as String,
-              author: item['artistName'] as String?,
-              artworkUrl:
-                  item['artworkUrl600'] as String? ??
-                  item['artworkUrl100'] as String?,
-            ),
-          )
-          .toList();
-    } on PodcastRepositoryException {
-      rethrow;
-    } on SocketException catch (error) {
-      throw PodcastRepositoryException('无法搜索播客：${error.message}');
-    } finally {
-      client.close(force: true);
-    }
+    return searchApplePodcasts(query);
   }
 
   @override
@@ -369,7 +328,7 @@ class LocalPodcastRepository implements PodcastRepository {
     Object? firstError;
     for (final source in supported) {
       try {
-        final content = await _getText(source.url);
+        final content = await fetchTranscriptText(source.url);
         final document = parseLocalTranscript(
           episodeId: episodeId,
           content: content,
@@ -556,25 +515,6 @@ class LocalPodcastRepository implements PodcastRepository {
     return listeningStats(listenedAt, days: days);
   }
 
-  Future<String> _getText(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null || !const {'http', 'https'}.contains(uri.scheme)) {
-      throw const PodcastRepositoryException('字幕地址无效');
-    }
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 20);
-    try {
-      final response = await (await client.getUrl(uri)).close();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        await response.drain<void>();
-        throw PodcastRepositoryException('无法获取字幕（${response.statusCode}）');
-      }
-      return await response.transform(utf8.decoder).join();
-    } finally {
-      client.close(force: true);
-    }
-  }
-
   Episode _createEpisode(int podcastId, LocalFeedEpisode value) {
     return Episode(
       id: _nextEpisodeId++,
@@ -709,38 +649,4 @@ class LocalPodcastRepository implements PodcastRepository {
     final dateOrder = rightDate.compareTo(leftDate);
     return dateOrder != 0 ? dateOrder : right.id.compareTo(left.id);
   }
-}
-
-class PlaybackSession {
-  const PlaybackSession({
-    required this.episode,
-    required this.positionMs,
-    required this.speed,
-    this.podcastTitle,
-    this.artworkUrl,
-  });
-
-  factory PlaybackSession.fromJson(Map<String, dynamic> json) {
-    return PlaybackSession(
-      episode: Episode.fromJson(json['episode'] as Map<String, dynamic>),
-      positionMs: json['position_ms'] as int? ?? 0,
-      speed: (json['speed'] as num?)?.toDouble() ?? 1,
-      podcastTitle: json['podcast_title'] as String?,
-      artworkUrl: json['artwork_url'] as String?,
-    );
-  }
-
-  final Episode episode;
-  final int positionMs;
-  final double speed;
-  final String? podcastTitle;
-  final String? artworkUrl;
-
-  Map<String, dynamic> toJson() => {
-    'episode': episode.toJson(),
-    'position_ms': positionMs,
-    'speed': speed,
-    'podcast_title': podcastTitle,
-    'artwork_url': artworkUrl,
-  };
 }
