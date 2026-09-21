@@ -16,6 +16,7 @@ import 'features/player/application/transcript_controller.dart';
 import 'features/player/data/mobile_on_device_transcriber.dart';
 import 'features/player/data/transcript_audio_store.dart';
 import 'features/player/data/mobile_transcript_translator.dart';
+import 'features/player/presentation/mini_player.dart';
 import 'features/player/presentation/player_screen.dart';
 import 'features/progress/presentation/progress_screen.dart';
 import 'features/progress/application/listening_controller.dart';
@@ -432,7 +433,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (showMiniPlayer)
-                        _MiniPlayer(
+                        MiniPlayer(
                           key: _miniPlayerKey,
                           controller: _playbackController,
                         ),
@@ -458,115 +459,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           },
         ),
       ),
-    );
-  }
-}
-
-class _MiniPlayer extends StatelessWidget {
-  const _MiniPlayer({super.key, required this.controller});
-
-  final PlaybackController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    const foreground = Color(0xFF202124);
-    const secondary = Color(0xFF55575C);
-    return Material(
-      key: const ValueKey('mini_player'),
-      color: Colors.transparent,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          LinearProgressIndicator(
-            minHeight: 2,
-            color: foreground,
-            value: controller.duration == Duration.zero
-                ? 0
-                : (controller.position.inMilliseconds /
-                          controller.duration.inMilliseconds)
-                      .clamp(0, 1),
-            backgroundColor: Colors.transparent,
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-            child: Row(
-              children: [
-                _MiniArtwork(url: controller.artworkUrl),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        controller.episode!.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: foreground,
-                        ),
-                      ),
-                      if (controller.podcastTitle != null)
-                        Text(
-                          controller.podcastTitle!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: secondary),
-                        ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  color: foreground,
-                  tooltip: controller.playing ? '暂停' : '播放',
-                  onPressed: controller.togglePlayPause,
-                  icon: Icon(
-                    controller.playing
-                        ? Icons.pause_rounded
-                        : Icons.play_arrow_rounded,
-                  ),
-                ),
-                IconButton(
-                  color: foreground,
-                  tooltip: '前进 30 秒',
-                  onPressed: () => controller.skip(const Duration(seconds: 30)),
-                  icon: const Icon(Icons.forward_30_rounded),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MiniArtwork extends StatelessWidget {
-  const _MiniArtwork({required this.url});
-
-  final String? url;
-
-  @override
-  Widget build(BuildContext context) {
-    final fallback = ColoredBox(
-      color: Theme.of(context).colorScheme.secondaryContainer,
-      child: const SizedBox.square(
-        dimension: 46,
-        child: Icon(Icons.podcasts_rounded),
-      ),
-    );
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: url == null || url!.isEmpty
-          ? fallback
-          : Image.network(
-              url!,
-              width: 46,
-              height: 46,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => fallback,
-            ),
     );
   }
 }
