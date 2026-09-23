@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -13,14 +12,18 @@ import '../../library/domain/podcast.dart';
 import '../application/on_device_transcriber.dart';
 import 'asr_segmentation.dart';
 import 'transcript_audio_store.dart';
+import 'transcript_cache.dart';
 
 class MobileOnDeviceTranscriber implements OnDeviceTranscriber {
   MobileOnDeviceTranscriber({
     MethodChannel? audioDecoder,
     TranscriptAudioStore? audioStore,
+    TranscriptCache? transcriptCache,
   }) : _audioDecoder =
            audioDecoder ?? const MethodChannel('listen/audio_decoder'),
-       _audioStore = audioStore ?? TranscriptAudioStore();
+       _audioStore = audioStore ?? TranscriptAudioStore(),
+       _transcriptCache =
+           transcriptCache ?? TranscriptCache(version: _cacheVersion);
 
   static const int _maximumAudioBytes = 500 * 1024 * 1024;
   static const int _cacheVersion = 6;
@@ -31,27 +34,14 @@ class MobileOnDeviceTranscriber implements OnDeviceTranscriber {
   );
   final MethodChannel _audioDecoder;
   final TranscriptAudioStore _audioStore;
+  final TranscriptCache _transcriptCache;
 
   @override
   bool get isSupported => Platform.isAndroid;
 
   @override
-  Future<TranscriptDocument?> readCached(int episodeId) async {
-    final file = await _cacheFile(episodeId);
-    if (!await file.exists()) return null;
-    try {
-      final data =
-          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-      if (data['asr_cache_version'] != _cacheVersion) return null;
-      if (data['asr_complete'] != true) return null;
-      final document = TranscriptDocument.fromJson(data);
-      final key = document.audioKey;
-      if (key == null || await _audioStore.resolve(key) == null) return null;
-      return document;
-    } catch (_) {
-      return null;
-    }
-  }
+  Future<TranscriptDocument?> readCached(int episodeId) =>
+      _transcriptCache.read(episodeId, audioStore: _audioStore);
 
   @override
   Future<TranscriptDocument> transcribe(
@@ -95,7 +85,7 @@ class MobileOnDeviceTranscriber implements OnDeviceTranscriber {
         onChunk: (chunkCues, chunkIndex, chunkCount) async {
           cues.addAll(chunkCues);
           final document = _document(episode.id, spec.id, cues, audioKey);
-          await _writeCache(document, complete: false);
+          await _transcriptCache.write(document, complete: false);
           onPartial?.call(document);
           onProgress?.call(
             DeviceTranscriptionProgress(
@@ -113,7 +103,7 @@ class MobileOnDeviceTranscriber implements OnDeviceTranscriber {
         throw const OnDeviceTranscriptionException('手机没有识别到有效语音');
       }
       final document = _document(episode.id, spec.id, cues, audioKey);
-      await _writeCache(document, complete: true);
+      await _transcriptCache.write(document, complete: true);
       onProgress?.call(
         const DeviceTranscriptionProgress(message: '手机离线字幕已完成', fraction: 1),
       );
@@ -383,51 +373,6 @@ class MobileOnDeviceTranscriber implements OnDeviceTranscriber {
       'audio_key': audioKey,
     });
   }
-
-  Future<File> _cacheFile(int episodeId) async {
-    final support = await getApplicationSupportDirectory();
-    final directory = Directory('${support.path}/transcripts');
-    await directory.create(recursive: true);
-    return File('${directory.path}/episode-$episodeId.json');
-  }
-
-  Future<void> _writeCache(
-    TranscriptDocument document, {
-    required bool complete,
-  }) async {
-    final file = await _cacheFile(document.episodeId);
-    await file.writeAsString(
-      jsonEncode(_documentToJson(document, complete: complete)),
-      flush: true,
-    );
-  }
-
-  Map<String, dynamic> _documentToJson(
-    TranscriptDocument document, {
-    required bool complete,
-  }) => {
-    'asr_cache_version': _cacheVersion,
-    'asr_complete': complete,
-    'episode_id': document.episodeId,
-    'language': document.language,
-    'source': document.source,
-    'target_language': document.targetLanguage,
-    'translation_source': document.translationSource,
-    'audio_key': document.audioKey,
-    'segments': document.segments
-        .map(
-          (segment) => {
-            'index': segment.index,
-            'start_ms': segment.startMs,
-            'end_ms': segment.endMs,
-            'text': segment.text,
-            'speaker': segment.speaker,
-            'paragraph_index': segment.paragraphIndex,
-            'translation': segment.translation,
-          },
-        )
-        .toList(),
-  };
 
   String _safeExtension(String path) {
     final match = RegExp(r'\.[a-zA-Z0-9]{2,5}$').firstMatch(path);
